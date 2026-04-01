@@ -233,6 +233,30 @@ function resolveMatchingChildBinding(params: {
 }
 
 export function registerFeishuSubagentHooks(api: OpenClawPluginApi) {
+  // Block direct lark-cli command execution in shell — force agent to use
+  // the lark_cli tool so auth (--app-id) is always injected automatically.
+  // Only block actual CLI invocations (e.g. `lark-cli calendar ...`,
+  // `npx lark-cli ...`), not incidental mentions like `npm install ...`
+  // or `cat lark-cli.log`.
+  const LARK_CLI_EXEC_PATTERN =
+    /(?:^|&&|\|\||;|`|\$\()\s*(?:npx\s+)?lark-cli\s/;
+  api.on("before_tool_call", (event) => {
+    const toolName = event.toolName;
+    if (toolName !== "exec" && toolName !== "bash" && toolName !== "shell") {
+      return;
+    }
+    const command = String((event.params as Record<string, unknown>)?.command ?? "");
+    if (!LARK_CLI_EXEC_PATTERN.test(command)) {
+      return;
+    }
+    return {
+      block: true,
+      blockReason:
+        "Do not call lark-cli directly via shell. " +
+        "Use the lark_cli tool instead — it handles authentication and account selection automatically.",
+    };
+  });
+
   api.on("subagent_spawning", async (event, ctx) => {
     if (!event.threadRequested) {
       return;
