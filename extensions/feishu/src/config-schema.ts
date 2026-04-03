@@ -10,6 +10,7 @@ const ChannelActionsSchema = z
   .strict()
   .optional();
 
+const FeishuAppModeSchema = z.enum(["user", "bot"]);
 const DmPolicySchema = z.enum(["open", "pairing", "allowlist"]);
 const GroupPolicySchema = z.union([
   z.enum(["open", "allowlist", "disabled"]),
@@ -209,6 +210,7 @@ export const FeishuConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
     defaultAccount: z.string().optional(),
+    appMode: FeishuAppModeSchema.optional(),
     // Top-level credentials (backward compatible for single-account mode)
     appId: z.string().optional(),
     appSecret: buildSecretInputSchema().optional(),

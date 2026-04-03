@@ -11,6 +11,7 @@ export type FeishuConfig = z.infer<typeof FeishuConfigSchema>;
 export type FeishuGroupConfig = z.infer<typeof FeishuGroupSchema>;
 export type FeishuAccountConfig = z.infer<typeof FeishuAccountConfigSchema>;
 
+export type FeishuAppMode = "user" | "bot";
 export type FeishuDomain = "feishu" | "lark" | (string & {});
 export type FeishuConnectionMode = "websocket" | "webhook";
 
