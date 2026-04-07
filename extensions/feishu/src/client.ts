@@ -1,7 +1,28 @@
 import type { Agent } from "node:https";
+import { createRequire } from "node:module";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import { resolveAmbientNodeProxyAgent } from "openclaw/plugin-sdk/extension-shared";
 import type { FeishuConfig, FeishuDomain, ResolvedFeishuAccount } from "./types.js";
+
+const require = createRequire(import.meta.url);
+const { version: pluginVersion } = require("../package.json") as { version: string };
+
+export { pluginVersion };
+const FEISHU_UA_BASE = `openclaw-feishu-builtin/${pluginVersion}/${process.platform}`;
+let feishuAppModeSuffix: string | undefined;
+
+/** Set the appMode suffix for User-Agent (e.g. "bot" or "user"). Call once at startup. */
+export function setFeishuUserAgentMode(appMode: string | undefined): void {
+  feishuAppModeSuffix = appMode?.trim() || undefined;
+}
+
+/** User-Agent header value, includes appMode suffix if configured. */
+export function getFeishuUserAgent(): string {
+  return feishuAppModeSuffix ? `${FEISHU_UA_BASE}/${feishuAppModeSuffix}` : FEISHU_UA_BASE;
+}
+
+/** @deprecated Use getFeishuUserAgent() for dynamic value. Kept for static import compatibility. */
+export const FEISHU_USER_AGENT = FEISHU_UA_BASE;
 
 type FeishuClientSdk = Pick<
   typeof Lark,
@@ -61,25 +82,28 @@ function resolveDomain(domain: FeishuDomain | undefined): Lark.Domain | string {
 
 /**
  * Create an HTTP instance that delegates to the Lark SDK's default instance
- * but injects a default request timeout to prevent indefinite hangs
- * (e.g. when the Feishu API is slow, causing per-chat queue deadlocks).
+ * but injects default request timeout and User-Agent header for OAPI tracking.
  */
 function createTimeoutHttpInstance(defaultTimeoutMs: number): Lark.HttpInstance {
   const base: FeishuHttpInstanceLike = feishuClientSdk.defaultHttpInstance;
 
-  function injectTimeout<D>(opts?: Lark.HttpRequestOptions<D>): Lark.HttpRequestOptions<D> {
-    return { timeout: defaultTimeoutMs, ...opts } as Lark.HttpRequestOptions<D>;
+  function injectDefaults<D>(opts?: Lark.HttpRequestOptions<D>): Lark.HttpRequestOptions<D> {
+    return {
+      timeout: defaultTimeoutMs,
+      ...opts,
+      headers: { "User-Agent": getFeishuUserAgent(), ...opts?.headers },
+    } as Lark.HttpRequestOptions<D>;
   }
 
   return {
-    request: (opts) => base.request(injectTimeout(opts)),
-    get: (url, opts) => base.get(url, injectTimeout(opts)),
-    post: (url, data, opts) => base.post(url, data, injectTimeout(opts)),
-    put: (url, data, opts) => base.put(url, data, injectTimeout(opts)),
-    patch: (url, data, opts) => base.patch(url, data, injectTimeout(opts)),
-    delete: (url, opts) => base.delete(url, injectTimeout(opts)),
-    head: (url, opts) => base.head(url, injectTimeout(opts)),
-    options: (url, opts) => base.options(url, injectTimeout(opts)),
+    request: (opts) => base.request(injectDefaults(opts)),
+    get: (url, opts) => base.get(url, injectDefaults(opts)),
+    post: (url, data, opts) => base.post(url, data, injectDefaults(opts)),
+    put: (url, data, opts) => base.put(url, data, injectDefaults(opts)),
+    patch: (url, data, opts) => base.patch(url, data, injectDefaults(opts)),
+    delete: (url, opts) => base.delete(url, injectDefaults(opts)),
+    head: (url, opts) => base.head(url, injectDefaults(opts)),
+    options: (url, opts) => base.options(url, injectDefaults(opts)),
   };
 }
 

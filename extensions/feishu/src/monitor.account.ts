@@ -1,4 +1,7 @@
 import * as crypto from "crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import type { ClawdbotConfig, RuntimeEnv, HistoryEntry } from "../runtime-api.js";
 import { resolveFeishuAccount } from "./accounts.js";
@@ -11,7 +14,12 @@ import {
 } from "./bot.js";
 import { handleFeishuCardAction, type FeishuCardActionEvent } from "./card-action.js";
 import { maybeHandleFeishuQuickActionMenu } from "./card-ux-launcher.js";
-import { createEventDispatcher } from "./client.js";
+import {
+  createEventDispatcher,
+  createFeishuClient,
+  pluginVersion,
+  setFeishuUserAgentMode,
+} from "./client.js";
 import { handleFeishuCommentEvent } from "./comment-handler.js";
 import { isRecord, readString } from "./comment-shared.js";
 import {
@@ -28,7 +36,7 @@ import { fetchBotIdentityForMonitor } from "./monitor.startup.js";
 import { botNames, botOpenIds } from "./monitor.state.js";
 import { monitorWebhook, monitorWebSocket } from "./monitor.transport.js";
 import { getFeishuRuntime } from "./runtime.js";
-import { getMessageFeishu } from "./send.js";
+import { getMessageFeishu, sendCardFeishu } from "./send.js";
 import { createFeishuThreadBindingManager } from "./thread-bindings.js";
 import type { FeishuChatType, ResolvedFeishuAccount } from "./types.js";
 
@@ -827,10 +835,240 @@ export type MonitorSingleAccountParams = {
   botOpenIdSource?: BotOpenIdSource;
 };
 
+// --- lark-cli upgrade notification (one-time) ---
+
+const LARK_CLI_MIN_VERSION = "2026.4.0";
+
+function resolveFeishuStateDir(): string {
+  const stateOverride = process.env.OPENCLAW_STATE_DIR?.trim();
+  if (stateOverride) {
+    return path.join(stateOverride, "feishu");
+  }
+  return path.join(os.homedir(), ".openclaw", "feishu");
+}
+
+function resolveNotifiedRecordPath(): string {
+  return path.join(resolveFeishuStateDir(), "lark-cli-upgrade-notified.json");
+}
+
+type NotifiedRecord = {
+  version: string;
+  userOpenId: string;
+  notifiedAt: string;
+};
+
+function readNotifiedRecord(): NotifiedRecord | null {
+  try {
+    const raw = require("node:fs").readFileSync(resolveNotifiedRecordPath(), "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function writeNotifiedRecord(record: NotifiedRecord): Promise<void> {
+  const filePath = resolveNotifiedRecordPath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(record, null, 2), "utf-8");
+}
+
+function isVersionGte(current: string, minimum: string): boolean {
+  const parse = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
+  const c = parse(current);
+  const m = parse(minimum);
+  for (let i = 0; i < Math.max(c.length, m.length); i++) {
+    const cv = c[i] ?? 0;
+    const mv = m[i] ?? 0;
+    if (cv > mv) {
+      return true;
+    }
+    if (cv < mv) {
+      return false;
+    }
+  }
+  return true; // equal
+}
+
+function buildLarkCliUpgradeCard(domain: string | undefined): Record<string, unknown> {
+  const isLark = domain === "lark";
+  return {
+    schema: "2.0",
+    config: {
+      width_mode: "fill",
+    },
+    header: {
+      title: {
+        tag: "plain_text",
+        content: isLark
+          ? "🎉 OpenClaw now supports lark-cli integration"
+          : "🎉 OpenClaw 现已支持 lark-cli 集成",
+      },
+      template: "blue",
+    },
+    body: {
+      elements: [
+        {
+          tag: "markdown",
+          content: isLark
+            ? "lark-cli is the official Lark CLI by larksuite. Once enabled, your bot can operate Lark resources on your behalf — not just as an app.\n\n" +
+              "What you can do after enabling:\n" +
+              "📄 Read/write Docs & Wiki as yourself\n" +
+              "📅 View your calendar, create events, check availability\n" +
+              "📊 Query and update Bitable records\n" +
+              "📁 Manage Drive files and folders\n" +
+              "💬 Search chat history and send messages\n" +
+              "📋 Create and manage Tasks\n\n" +
+              "Get started:\n" +
+              "```\nnpx @lark-open/openclaw-lark-tools@1.0.38-alpha.3 identity switch --user -y\n```\n\n" +
+              "[Learn more](https://github.com/larksuite/cli)"
+            : "lark-cli 是飞书官方命令行工具。开启后，bot 不再局限于应用身份，可以代你直接操作飞书资源。\n\n" +
+              "开启后你可以：\n" +
+              "📄 以个人身份读写云文档、编辑知识库\n" +
+              "📅 查看你的日历、创建日程、查询忙闲\n" +
+              "📊 查询和更新多维表格数据\n" +
+              "📁 管理云空间文件和文件夹\n" +
+              "💬 搜索聊天记录、发送消息\n" +
+              "📋 创建和管理飞书任务\n\n" +
+              "一键开启：\n" +
+              "```\nnpx @lark-open/openclaw-lark-tools@1.0.38-alpha.3 identity switch --user -y\n```\n\n" +
+              "[了解更多](https://github.com/larksuite/cli)",
+        },
+      ],
+    },
+  };
+}
+
+export async function checkAndNotifyLarkCliUpgrade(params: {
+  cfg: ClawdbotConfig;
+  accountId: string;
+  domain: string | undefined;
+  log: (...args: unknown[]) => void;
+}): Promise<void> {
+  const { cfg, accountId, domain, log } = params;
+  try {
+    // 1. Check if mode is already configured (user already migrated)
+    const feishuCfg = (cfg as Record<string, unknown>).channels as
+      | Record<string, unknown>
+      | undefined;
+    const accountCfg = (feishuCfg?.feishu ?? feishuCfg?.[accountId]) as
+      | Record<string, unknown>
+      | undefined;
+    if (accountCfg?.mode) {
+      log(`feishu[${accountId}]: lark-cli upgrade notification skipped: mode already configured`);
+      return;
+    }
+
+    // 2. Check if multi-account configured (lark-cli only supports single account)
+    const accounts = (feishuCfg?.feishu as Record<string, unknown> | undefined)?.accounts;
+    if (accounts && typeof accounts === "object" && Object.keys(accounts).length > 1) {
+      log(`feishu[${accountId}]: lark-cli upgrade notification skipped: multi-account configured`);
+      return;
+    }
+
+    // 3. Check if already notified (any record exists = never notify again)
+    const existingRecord = readNotifiedRecord();
+    if (existingRecord) {
+      log(`feishu[${accountId}]: lark-cli upgrade notification skipped: already notified`);
+      return;
+    }
+
+    // 4. Check version
+    if (!isVersionGte(pluginVersion, LARK_CLI_MIN_VERSION)) {
+      log(
+        `feishu[${accountId}]: lark-cli upgrade notification skipped: version ${pluginVersion} below minimum ${LARK_CLI_MIN_VERSION}`,
+      );
+      return;
+    }
+
+    // 5. Resolve app owner via OAPI — only send to the owner
+    let ownerOpenId: string | undefined;
+    try {
+      const account = resolveFeishuAccount({ cfg, accountId });
+      if (!account.configured) {
+        log(`feishu[${accountId}]: lark-cli upgrade notification skipped: account not configured`);
+        return;
+      }
+      const appId = account.appId;
+      if (!appId) {
+        log(`feishu[${accountId}]: lark-cli upgrade notification skipped: no appId`);
+        return;
+      }
+      const client = createFeishuClient(account) as {
+        request: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      };
+      const appResp = (await client.request({
+        method: "GET",
+        url: `/open-apis/application/v6/applications/${appId}`,
+        data: {},
+        params: { lang: "zh_cn", user_id_type: "open_id" },
+        timeout: 10_000,
+      })) as { data?: { app?: { owner?: { open_id?: string } } } };
+      ownerOpenId = appResp.data?.app?.owner?.open_id;
+    } catch (err) {
+      log(
+        `feishu[${accountId}]: lark-cli upgrade notification skipped: failed to resolve app owner (${String(err)})`,
+      );
+      return;
+    }
+
+    if (!ownerOpenId) {
+      log(`feishu[${accountId}]: lark-cli upgrade notification skipped: app owner not found`);
+      return;
+    }
+
+    // 6. Send notification to app owner only
+    const card = buildLarkCliUpgradeCard(domain);
+    let sent = false;
+
+    try {
+      await sendCardFeishu({
+        cfg,
+        to: `user:${ownerOpenId}`,
+        card,
+        accountId,
+      });
+      sent = true;
+      log(`feishu[${accountId}]: lark-cli upgrade notification sent to owner ${ownerOpenId}`);
+    } catch (err) {
+      log(
+        `feishu[${accountId}]: lark-cli upgrade notification failed for owner ${ownerOpenId}: ${String(err)}`,
+      );
+    }
+
+    // 7. Write record only on success (retry on next startup if failed)
+    if (sent) {
+      const notifiedAt = new Intl.DateTimeFormat("sv-SE", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZoneName: "longOffset",
+      })
+        .format(new Date())
+        .replace(" ", "T")
+        .replace(/\s*GMT/, "");
+      await writeNotifiedRecord({ version: pluginVersion, userOpenId: ownerOpenId, notifiedAt });
+    }
+    log(`feishu[${accountId}]: lark-cli upgrade notification complete (sent=${sent})`);
+  } catch (err) {
+    // Never block plugin startup
+    log(`feishu[${accountId}]: lark-cli upgrade check failed (non-fatal): ${String(err)}`);
+  }
+}
+
+// --- end lark-cli upgrade notification ---
+
 export async function monitorSingleAccount(params: MonitorSingleAccountParams): Promise<void> {
   const { cfg, account, runtime, abortSignal } = params;
   const { accountId } = account;
   const log = runtime?.log ?? console.log;
+
+  // Set User-Agent appMode suffix from config (e.g. "bot" or "user")
+  const appMode = (account.config as Record<string, unknown>).appMode as string | undefined;
+  setFeishuUserAgentMode(appMode);
 
   const botOpenIdSource = params.botOpenIdSource ?? { kind: "fetch" };
   const botIdentity =
@@ -856,6 +1094,9 @@ export async function monitorSingleAccount(params: MonitorSingleAccountParams): 
   if (warmupCount > 0) {
     log(`feishu[${accountId}]: dedup warmup loaded ${warmupCount} entries from disk`);
   }
+
+  // One-time lark-cli upgrade notification (non-blocking)
+  void checkAndNotifyLarkCliUpgrade({ cfg, accountId, domain: account.config.domain, log });
 
   let threadBindingManager: ReturnType<typeof createFeishuThreadBindingManager> | null = null;
   try {
