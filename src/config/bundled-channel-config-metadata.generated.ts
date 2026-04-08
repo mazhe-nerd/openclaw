@@ -3145,6 +3145,10 @@ export const GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA = [
         defaultAccount: {
           type: "string",
         },
+        appMode: {
+          type: "string",
+          enum: ["user", "bot"],
+        },
         appId: {
           type: "string",
         },
