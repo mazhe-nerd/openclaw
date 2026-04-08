@@ -67,7 +67,7 @@ import { collectFeishuSecurityAuditFindings } from "./security-audit.js";
 import { resolveFeishuSessionConversation } from "./session-conversation.js";
 import { resolveFeishuOutboundSessionRoute } from "./session-route.js";
 import { feishuSetupAdapter } from "./setup-core.js";
-import { feishuSetupWizard } from "./setup-surface.js";
+import { feishuSetupWizard, runFeishuLogin } from "./setup-surface.js";
 import { looksLikeFeishuId, normalizeFeishuTarget } from "./targets.js";
 import type { FeishuConfig, FeishuProbeResult, ResolvedFeishuAccount } from "./types.js";
 
@@ -1090,6 +1090,19 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
             commandTo,
             fallbackTo,
           }),
+      },
+      auth: {
+        login: async ({ cfg: _cfg }) => {
+          const { createClackPrompter } = await import("openclaw/plugin-sdk/feishu");
+          const { loadConfig, writeConfigFile } =
+            await import("openclaw/plugin-sdk/config-runtime");
+          const prompter = createClackPrompter();
+          const currentCfg = loadConfig();
+          const nextCfg = await runFeishuLogin({ cfg: currentCfg, prompter });
+          if (nextCfg !== currentCfg) {
+            await writeConfigFile(nextCfg);
+          }
+        },
       },
       setup: feishuSetupAdapter,
       setupWizard: feishuSetupWizard,

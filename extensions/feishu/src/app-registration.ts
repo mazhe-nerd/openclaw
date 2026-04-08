@@ -231,7 +231,8 @@ export async function pollAppRegistration(params: {
  * otherwise the pattern is corrupted and cannot be scanned.
  */
 export async function printQrCode(url: string): Promise<void> {
-  const qrcode = await import("qrcode-terminal");
+  const mod = await import("qrcode-terminal");
+  const qrcode = mod.default ?? mod;
   qrcode.generate(url, { small: true });
 }
 

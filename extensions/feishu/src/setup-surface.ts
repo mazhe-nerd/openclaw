@@ -1,5 +1,4 @@
 import {
-  buildSingleChannelSecretPromptState,
   createTopLevelChannelAllowFromSetter,
   createTopLevelChannelDmPolicy,
   createTopLevelChannelGroupPolicySetter,
@@ -16,7 +15,7 @@ import {
   type OpenClawConfig,
   type SecretInput,
 } from "openclaw/plugin-sdk/setup";
-import { inspectFeishuCredentials, listFeishuAccountIds } from "./accounts.js";
+import { inspectFeishuCredentials } from "./accounts.js";
 import {
   beginAppRegistration,
   getAppOwnerOpenId,
@@ -26,7 +25,6 @@ import {
   type AppRegistrationResult,
 } from "./app-registration.js";
 import { probeFeishu } from "./probe.js";
-import { feishuSetupAdapter } from "./setup-core.js";
 import type { FeishuAppMode, FeishuConfig, FeishuDomain } from "./types.js";
 
 const channel = "feishu" as const;
@@ -37,39 +35,6 @@ const setFeishuGroupPolicy = createTopLevelChannelGroupPolicySetter({
   channel,
   enabled: true,
 });
-
-// ---------------------------------------------------------------------------
-// Skills lists (from requirements doc)
-// ---------------------------------------------------------------------------
-
-/** Tools skills — enabled in "As bot" mode, disabled in "As you" mode. */
-const TOOLS_SKILLS = [
-  "lark-mail",
-  "lark-minutes",
-  "lark-openapi-explorer",
-  "lark-skill-maker",
-  "lark-calendar",
-  "lark-workflow-standup-report",
-  "lark-wiki",
-  "lark-doc",
-  "lark-contact",
-  "lark-vc",
-  "lark-drive",
-  "lark-workflow-meeting-summary",
-  "lark-shared",
-  "lark-base",
-  "lark-im",
-  "lark-sheets",
-  "lark-task",
-  "lark-whiteboard",
-  "feishu-doc",
-  "feishu-drive",
-  "feishu-perm",
-  "feishu-wiki",
-] as const;
-
-/** lark-cli skills — no longer managed by onboarding. */
-const LARKCLI_SKILLS: readonly string[] = [];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,19 +88,6 @@ function isFeishuConfigured(cfg: OpenClawConfig): boolean {
   });
 
   return topLevelConfigured || accountConfigured;
-}
-
-function setFeishuGroupAllowFrom(cfg: OpenClawConfig, groupAllowFrom: string[]): OpenClawConfig {
-  return {
-    ...cfg,
-    channels: {
-      ...cfg.channels,
-      feishu: {
-        ...cfg.channels?.feishu,
-        groupAllowFrom,
-      },
-    },
-  };
 }
 
 function setFeishuGroupSenderAllowFrom(
@@ -213,114 +165,11 @@ const feishuDmPolicy: ChannelSetupDmPolicy = createTopLevelChannelDmPolicy({
 type WizardPrompter = Parameters<NonNullable<ChannelSetupWizard["finalize"]>>[0]["prompter"];
 
 // ---------------------------------------------------------------------------
-// Mode selection
-// ---------------------------------------------------------------------------
-
-async function promptAppMode(
-  prompter: WizardPrompter,
-  options?: {
-    disableUser?: boolean;
-    currentMode?: FeishuAppMode;
-  },
-): Promise<FeishuAppMode> {
-  const userHint = options?.disableUser
-    ? "Works under your identity, managing messages, docs, calendar, and more as you upon authorization. (\u26a0\ufe0f Unavailable with multiple linked bots. Remove unused bots to enable this option.)"
-    : "Works under your identity, managing messages, docs, calendar, and more as you upon authorization.";
-
-  const botOption = {
-    value: "bot" as const,
-    label: "As bot (recommended)",
-    hint: "Works under its own identity. Best for group chats, team notifications, and shared documents.",
-  };
-  const userOption = {
-    value: "user" as const,
-    label: "As you",
-    hint: userHint,
-  };
-
-  const selectOptions = options?.disableUser ? [botOption] : [botOption, userOption];
-
-  return (await prompter.select({
-    message: "How should the AI work with you?",
-    options: selectOptions,
-    initialValue: options?.currentMode ?? "bot",
-  })) as FeishuAppMode;
-}
-
-// ---------------------------------------------------------------------------
-// Skills configuration
-// ---------------------------------------------------------------------------
-
-/** Skills that are always disabled regardless of mode. */
-const ALWAYS_DISABLED_SKILLS = ["lark-event"] as const;
-
-/**
- * Returns which skills to disable and which to enable (remove from entries).
- *
- * - As you (user mode): disable tools skills
- * - As bot (bot mode): enable tools skills (remove disabled entries)
- * - lark-event is always disabled
- *
- * Disable = set `{ enabled: false }` in `skills.entries`
- * Enable  = remove the key from `skills.entries` so default behavior takes over
- */
-function buildSkillsConfig(appMode: FeishuAppMode): {
-  disable: Record<string, { enabled: false }>;
-  enable: readonly string[];
-} {
-  const disable: Record<string, { enabled: false }> = {};
-
-  // Always-disabled skills.
-  for (const skill of ALWAYS_DISABLED_SKILLS) {
-    disable[skill] = { enabled: false };
-  }
-
-  if (appMode === "user") {
-    // User mode: enable lark-cli skills, disable tools skills.
-    for (const skill of TOOLS_SKILLS) {
-      disable[skill] = { enabled: false };
-    }
-    return { disable, enable: LARKCLI_SKILLS };
-  }
-  // Bot mode: enable tools skills, disable lark-cli skills.
-  for (const skill of LARKCLI_SKILLS) {
-    disable[skill] = { enabled: false };
-  }
-  return { disable, enable: TOOLS_SKILLS };
-}
-
-/** Apply skills config: disable target skills, remove opposite skills from entries. */
-function applySkillsConfig(cfg: OpenClawConfig, appMode: FeishuAppMode): OpenClawConfig {
-  const { disable, enable } = buildSkillsConfig(appMode);
-
-  const existingSkills = (cfg as Record<string, unknown>).skills as
-    | Record<string, unknown>
-    | undefined;
-  const existingEntries = (existingSkills?.entries ?? {}) as Record<string, unknown>;
-
-  // Clone entries, remove keys that should be enabled, then merge disabled ones.
-  const newEntries = { ...existingEntries };
-  for (const skill of enable) {
-    delete newEntries[skill];
-  }
-  Object.assign(newEntries, disable);
-
-  return {
-    ...cfg,
-    skills: {
-      ...existingSkills,
-      entries: newEntries,
-    },
-  } as OpenClawConfig;
-}
-
-// ---------------------------------------------------------------------------
 // Security policy helpers
 // ---------------------------------------------------------------------------
 
 function applyNewAppSecurityPolicy(
   cfg: OpenClawConfig,
-  appMode: FeishuAppMode,
   openId: string | undefined,
 ): OpenClawConfig {
   let next = cfg;
@@ -329,33 +178,16 @@ function applyNewAppSecurityPolicy(
     return next;
   }
 
-  // Both modes: dmPolicy=allowlist, allowFrom=[openId]
+  // dmPolicy=allowlist, allowFrom=[openId]
   next = patchTopLevelChannelConfigSection({
     cfg: next,
     channel,
     patch: { dmPolicy: "allowlist" },
-  }) as OpenClawConfig;
+  });
   next = setFeishuAllowFrom(next, [openId]);
 
-  // Both modes: groupPolicy=open
+  // groupPolicy=open
   next = setFeishuGroupPolicy(next, "open");
-
-  // Enable wildcard groups.
-  next = patchTopLevelChannelConfigSection({
-    cfg: next,
-    channel,
-    patch: {
-      groups: {
-        ...((next.channels?.feishu as FeishuConfig | undefined)?.groups ?? {}),
-        "*": { enabled: true },
-      },
-    },
-  }) as OpenClawConfig;
-
-  if (appMode === "user") {
-    // User mode: also set groupSenderAllowFrom=[openId]
-    next = setFeishuGroupSenderAllowFrom(next, [openId]);
-  }
 
   return next;
 }
@@ -364,10 +196,7 @@ function applyNewAppSecurityPolicy(
 // Scan-to-create flow
 // ---------------------------------------------------------------------------
 
-async function runScanToCreate(
-  prompter: WizardPrompter,
-  appMode: FeishuAppMode,
-): Promise<AppRegistrationResult | null> {
+async function runScanToCreate(prompter: WizardPrompter): Promise<AppRegistrationResult | null> {
   try {
     await initAppRegistration("feishu");
   } catch {
@@ -385,13 +214,12 @@ async function runScanToCreate(
 
   const progress = prompter.progress("Fetching configuration results...");
 
-  const tp = appMode === "user" ? "ob_user" : "ob_app";
   const outcome = await pollAppRegistration({
     deviceCode: begin.deviceCode,
     interval: begin.interval,
     expireIn: begin.expireIn,
     initialDomain: "feishu",
-    tp,
+    tp: "ob_app",
   });
 
   switch (outcome.status) {
@@ -414,35 +242,6 @@ async function runScanToCreate(
 }
 
 // ---------------------------------------------------------------------------
-// Install helpers
-// ---------------------------------------------------------------------------
-
-async function ensureLarkCliInstalled(): Promise<void> {
-  try {
-    const { execSync } = await import("node:child_process");
-    try {
-      execSync("lark-cli --version", { stdio: "ignore" });
-    } catch {
-      execSync("npm install -g @larksuite/cli", { stdio: "ignore", timeout: 120_000 });
-    }
-  } catch {
-    // install failed or node:child_process unavailable — skip silently.
-  }
-}
-
-async function installLarkSkills(): Promise<void> {
-  try {
-    const { execSync } = await import("node:child_process");
-    execSync("npx skills add larksuite/cli -y -g -a openclaw", {
-      stdio: "ignore",
-      timeout: 120_000,
-    });
-  } catch {
-    // install failed or node:child_process unavailable — skip silently.
-  }
-}
-
-// ---------------------------------------------------------------------------
 // New app configuration flow
 // ---------------------------------------------------------------------------
 
@@ -450,20 +249,9 @@ async function runNewAppFlow(params: {
   cfg: OpenClawConfig;
   prompter: WizardPrompter;
   options: Parameters<NonNullable<ChannelSetupWizard["finalize"]>>[0]["options"];
-  appMode: FeishuAppMode;
-  skipModeSelection?: boolean;
 }): Promise<{ cfg: OpenClawConfig }> {
   const { prompter, options } = params;
   let next = params.cfg;
-  const appMode = params.appMode;
-
-  // Apply appMode to config.
-  next = patchTopLevelChannelConfigSection({
-    cfg: next,
-    channel,
-    enabled: true,
-    patch: { appMode },
-  }) as OpenClawConfig;
 
   // ----- QR scan flow -----
   let appId: string | null = null;
@@ -472,7 +260,7 @@ async function runNewAppFlow(params: {
   let scanDomain: FeishuDomain | undefined;
   let scanOpenId: string | undefined;
 
-  const scanResult = await runScanToCreate(prompter, appMode);
+  const scanResult = await runScanToCreate(prompter);
   if (scanResult) {
     appId = scanResult.appId;
     appSecret = scanResult.appSecret;
@@ -480,7 +268,7 @@ async function runNewAppFlow(params: {
     scanDomain = scanResult.domain;
     scanOpenId = scanResult.openId;
   } else {
-    // Fallback to manual input.
+    // Fallback to manual input: collect domain, appId, appSecret.
     const feishuCfg = next.channels?.feishu as FeishuConfig | undefined;
     await noteFeishuCredentialHelp(prompter);
 
@@ -519,11 +307,19 @@ async function runNewAppFlow(params: {
       appSecret = appSecretResult.value;
       appSecretProbeValue = appSecretResult.resolvedValue;
     }
+
+    // Fetch openId via API for manual flow.
+    if (appId && appSecretProbeValue) {
+      scanOpenId = await getAppOwnerOpenId({
+        appId,
+        appSecret: appSecretProbeValue,
+        domain: scanDomain,
+      });
+    }
   }
 
-  // ----- Apply credentials, policies, skills & install (under one spinner) -----
+  // ----- Apply credentials & security policy -----
   const configProgress = prompter.progress("Configuring...");
-  // Yield to let the spinner render before sync work and execSync block the event loop.
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   if (appId && appSecret) {
@@ -537,7 +333,7 @@ async function runNewAppFlow(params: {
         connectionMode: "websocket",
         ...(scanDomain ? { domain: scanDomain } : {}),
       },
-    }) as OpenClawConfig;
+    });
   }
 
   if (scanDomain) {
@@ -545,13 +341,19 @@ async function runNewAppFlow(params: {
       cfg: next,
       channel,
       patch: { domain: scanDomain },
-    }) as OpenClawConfig;
+    });
   }
 
-  next = applyNewAppSecurityPolicy(next, appMode, scanOpenId);
-  next = applySkillsConfig(next, appMode);
-  await ensureLarkCliInstalled();
-  await installLarkSkills();
+  next = applyNewAppSecurityPolicy(next, scanOpenId);
+
+  // Always set appMode to bot.
+  next = patchTopLevelChannelConfigSection({
+    cfg: next,
+    channel,
+    enabled: true,
+    patch: { appMode: "bot" },
+  });
+
   configProgress.stop("Bot configured.");
 
   return { cfg: next };
@@ -592,40 +394,40 @@ async function recommendSecurityPolicyChanges(params: {
     });
   }
 
+  await prompter.note(
+    "To keep your data safe while acting as you, we suggest these policy updates:",
+    "Security recommendation",
+  );
+
   const recommendations: string[] = [];
   let dmPatch: Partial<FeishuConfig> = {};
   let dmAllowFrom: string[] | undefined;
   let groupPatch: Partial<FeishuConfig> = {};
   let groupSenderAllowFrom: string[] | undefined;
 
-  await prompter.note(
-    "To keep your data safe while acting as you, we suggest these policy updates:",
-    "Security recommendation",
-  );
-
   if (needDmRecommendation) {
     if (ownerOpenId) {
       dmPatch = { dmPolicy: "allowlist" };
       dmAllowFrom = [ownerOpenId];
-      recommendations.push("DMs: Only the owner");
+      recommendations.push("- DMs: Only the owner");
     } else {
       dmPatch = { dmPolicy: "pairing" };
-      recommendations.push("DMs: Only the paired user");
+      recommendations.push("- DMs: Only the paired user");
     }
   }
 
   if (needGroupRecommendation) {
     if (ownerOpenId) {
       groupSenderAllowFrom = [ownerOpenId];
-      recommendations.push("Group chats: Only when mentioned by the owner");
+      recommendations.push("- Group chats: Only when mentioned by the owner");
     } else {
       groupPatch = { groupPolicy: "disabled" };
-      recommendations.push("Group chats: Disabled");
+      recommendations.push("- Group chats: Disabled");
     }
   }
 
   for (const rec of recommendations) {
-    await prompter.note(`- ${rec}`, "");
+    await prompter.note(rec, "");
   }
 
   const apply = await prompter.confirm({
@@ -643,7 +445,7 @@ async function recommendSecurityPolicyChanges(params: {
       cfg: next,
       channel,
       patch: dmPatch,
-    }) as OpenClawConfig;
+    });
   }
   if (dmAllowFrom) {
     next = setFeishuAllowFrom(next, dmAllowFrom);
@@ -653,7 +455,7 @@ async function recommendSecurityPolicyChanges(params: {
       cfg: next,
       channel,
       patch: groupPatch,
-    }) as OpenClawConfig;
+    });
   }
   if (groupSenderAllowFrom) {
     next = setFeishuGroupSenderAllowFrom(next, groupSenderAllowFrom);
@@ -674,28 +476,8 @@ async function runEditFlow(params: {
   const { prompter, options } = params;
   let next = params.cfg;
   const feishuCfg = next.channels?.feishu as FeishuConfig | undefined;
-  const currentAppMode = (feishuCfg as Record<string, unknown> | undefined)?.appMode as
-    | FeishuAppMode
-    | undefined;
 
-  // Framework already handles "already configured → update/skip" prompt.
-  // Proceed directly to mode selection.
-  const accountKeys = Object.keys(feishuCfg?.accounts ?? {});
-  const hasMultipleAccounts = accountKeys.length > 1;
-
-  const appMode = await promptAppMode(prompter, {
-    disableUser: hasMultipleAccounts,
-    currentMode: currentAppMode,
-  });
-
-  // Apply appMode.
-  next = patchTopLevelChannelConfigSection({
-    cfg: next,
-    channel,
-    patch: { appMode },
-  }) as OpenClawConfig;
-
-  // Step 3: Check existing appId.
+  // Check existing appId.
   const existingAppId = normalizeString(feishuCfg?.appId);
   if (existingAppId) {
     const useExisting = await prompter.confirm({
@@ -704,9 +486,13 @@ async function runEditFlow(params: {
     });
 
     if (useExisting) {
-      // Using existing bot.
-      if (appMode === "bot") {
-        // Bot mode with existing bot — skip to skills step.
+      // Step 3: Check current appMode for security recommendations.
+      const currentAppMode = (feishuCfg as Record<string, unknown> | undefined)?.appMode as
+        | FeishuAppMode
+        | undefined;
+
+      if (currentAppMode !== "user") {
+        // Bot mode (or unset) — skip to last step.
       } else {
         // User mode — recommend security policy changes.
         const resolvedSecret = inspectFeishuCredentials(feishuCfg);
@@ -719,35 +505,41 @@ async function runEditFlow(params: {
         });
       }
     } else {
-      // User wants a new bot — run new app flow (skip mode selection).
-      return runNewAppFlow({
-        cfg: next,
-        prompter,
-        options,
-        appMode,
-        skipModeSelection: true,
-      });
+      // Step 4: User wants a new bot — run new app flow.
+      return runNewAppFlow({ cfg: next, prompter, options });
     }
   } else {
-    // No existing appId — run new app flow (skip mode selection).
-    return runNewAppFlow({
-      cfg: next,
-      prompter,
-      options,
-      appMode,
-      skipModeSelection: true,
-    });
+    // No existing appId — run new app flow.
+    return runNewAppFlow({ cfg: next, prompter, options });
   }
 
-  // ----- Skills configuration & install -----
-  const configProgress = prompter.progress("Configuring...");
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  next = applySkillsConfig(next, appMode);
-  await ensureLarkCliInstalled();
-  await installLarkSkills();
-  configProgress.stop("Bot configured.");
+  await prompter.note("Bot configured.", "");
 
   return { cfg: next };
+}
+
+// ---------------------------------------------------------------------------
+// Standalone login entry point (for `channels login --channel feishu`)
+// ---------------------------------------------------------------------------
+
+export async function runFeishuLogin(params: {
+  cfg: OpenClawConfig;
+  prompter: WizardPrompter;
+}): Promise<OpenClawConfig> {
+  const { cfg, prompter } = params;
+  const options = {};
+  const alreadyConfigured = isFeishuConfigured(cfg);
+
+  if (alreadyConfigured) {
+    const result = await runEditFlow({ cfg, prompter, options });
+    if (result === null) {
+      return cfg;
+    }
+    return result.cfg;
+  }
+
+  const result = await runNewAppFlow({ cfg, prompter, options });
+  return result.cfg;
 }
 
 // ---------------------------------------------------------------------------
@@ -790,17 +582,15 @@ export const feishuSetupWizard: ChannelSetupWizard = {
   // -------------------------------------------------------------------------
   // prepare: determine flow based on existing configuration
   // -------------------------------------------------------------------------
-  prepare: async ({ cfg, credentialValues, prompter }) => {
+  prepare: async ({ cfg, credentialValues }) => {
     const alreadyConfigured = isFeishuConfigured(cfg);
 
     if (alreadyConfigured) {
-      // Edit flow — mark for finalize.
       return {
         credentialValues: { ...credentialValues, _flow: "edit" },
       };
     }
 
-    // New app flow — mark for finalize.
     return {
       credentialValues: { ...credentialValues, _flow: "new" },
     };
@@ -817,15 +607,12 @@ export const feishuSetupWizard: ChannelSetupWizard = {
     if (flow === "edit") {
       const result = await runEditFlow({ cfg, prompter, options });
       if (result === null) {
-        // User chose to skip.
         return { cfg };
       }
       return result;
     }
 
-    // New app flow — prompt mode then run.
-    const appMode = await promptAppMode(prompter);
-    return runNewAppFlow({ cfg, prompter, options, appMode });
+    return runNewAppFlow({ cfg, prompter, options });
   },
 
   dmPolicy: feishuDmPolicy,
