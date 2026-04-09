@@ -5,6 +5,7 @@ import type { ResolvedFeishuAccount } from "./types.js";
 const createFeishuWSClientMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
   createFeishuWSClient: createFeishuWSClientMock,
 }));
 

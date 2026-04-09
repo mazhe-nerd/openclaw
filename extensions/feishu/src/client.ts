@@ -11,7 +11,9 @@ export { pluginVersion };
 const FEISHU_UA_BASE = `openclaw-feishu-builtin/${pluginVersion}/${process.platform}`;
 let feishuAppModeSuffix: string | undefined;
 
-/** Set the appMode suffix for User-Agent (e.g. "bot" or "user"). Call once at startup. */
+/** Set the appMode suffix for User-Agent (e.g. "bot" or "user"). Call once at startup.
+ * Note: module-global — in multi-account scenarios the last caller wins.
+ * This is acceptable because user mode only supports single-account. */
 export function setFeishuUserAgentMode(appMode: string | undefined): void {
   feishuAppModeSuffix = appMode?.trim() || undefined;
 }

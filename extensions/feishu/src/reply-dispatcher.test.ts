@@ -59,7 +59,10 @@ vi.mock("./send.js", () => ({
   sendStructuredCardFeishu: sendStructuredCardFeishuMock,
 }));
 vi.mock("./media.js", () => ({ sendMediaFeishu: sendMediaFeishuMock }));
-vi.mock("./client.js", () => ({ createFeishuClient: createFeishuClientMock }));
+vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
+  createFeishuClient: createFeishuClientMock,
+}));
 vi.mock("./targets.js", () => ({ resolveReceiveIdType: resolveReceiveIdTypeMock }));
 vi.mock("./typing.js", () => ({
   addTypingIndicator: addTypingIndicatorMock,

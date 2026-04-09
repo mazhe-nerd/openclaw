@@ -21,6 +21,7 @@ const FEISHU_MEDIA_HTTP_TIMEOUT_MS = 120_000;
 const emptyConfig: ClawdbotConfig = {};
 
 vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
   createFeishuClient: createFeishuClientMock,
 }));
 

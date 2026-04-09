@@ -37,6 +37,7 @@ vi.mock("openclaw/plugin-sdk/text-runtime", async (importOriginal) => {
 });
 
 vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
   createFeishuClient: mockCreateFeishuClient,
 }));
 

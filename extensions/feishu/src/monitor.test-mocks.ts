@@ -7,6 +7,8 @@ export function createFeishuClientMockModule(): {
   return {
     createFeishuWSClient: vi.fn(() => ({ start: vi.fn(), close: vi.fn() })),
     createEventDispatcher: vi.fn(() => ({ register: vi.fn() })),
+    createFeishuClient: vi.fn(),
+    setFeishuUserAgentMode: vi.fn(),
   };
 }
 

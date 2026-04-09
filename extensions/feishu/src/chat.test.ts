@@ -8,6 +8,7 @@ const chatMembersGetMock = vi.hoisted(() => vi.fn());
 const contactUserGetMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
   createFeishuClient: createFeishuClientMock,
 }));
 

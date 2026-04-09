@@ -31,6 +31,10 @@ const mockBaseHttpInstance = vi.hoisted(() => ({
   delete: vi.fn().mockResolvedValue({}),
   head: vi.fn().mockResolvedValue({}),
   options: vi.fn().mockResolvedValue({}),
+  interceptors: {
+    request: { handlers: [] as unknown[], use: vi.fn() },
+    response: { handlers: [] as unknown[], use: vi.fn() },
+  },
 }));
 const proxyEnvKeys = ["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"] as const;
 type ProxyEnvKey = (typeof proxyEnvKeys)[number];

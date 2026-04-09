@@ -10,6 +10,7 @@ vi.mock("./accounts.js", () => ({
 }));
 
 vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
   createFeishuClient: createFeishuClientMock,
 }));
 

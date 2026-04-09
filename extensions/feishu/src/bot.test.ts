@@ -286,6 +286,7 @@ vi.mock("./media.js", () => ({
 }));
 
 vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
   createFeishuClient: mockCreateFeishuClient,
 }));
 

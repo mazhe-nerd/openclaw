@@ -29,6 +29,7 @@ vi.mock("./reply-dispatcher.js", () => ({
 }));
 
 vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
   createFeishuClient: mockCreateFeishuClient,
 }));
 

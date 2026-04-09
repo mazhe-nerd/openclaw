@@ -31,6 +31,7 @@ vi.mock("./runtime.js", () => ({
 }));
 
 vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
   createFeishuClient: vi.fn(() => ({ request: vi.fn() })),
 }));
 

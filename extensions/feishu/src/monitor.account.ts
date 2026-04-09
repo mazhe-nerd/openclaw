@@ -840,8 +840,9 @@ function resolveFeishuStateDir(): string {
   return path.join(os.homedir(), ".openclaw", "feishu");
 }
 
-function resolveWarningRecordPath(): string {
-  return path.join(resolveFeishuStateDir(), "open-policy-warning.json");
+function resolveWarningRecordPath(accountId: string): string {
+  const sanitized = accountId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return path.join(resolveFeishuStateDir(), `open-policy-warning-${sanitized}.json`);
 }
 
 type WarningRecord = {
@@ -851,17 +852,17 @@ type WarningRecord = {
   groupPolicy: string;
 };
 
-function readWarningRecord(): WarningRecord | null {
+async function readWarningRecord(accountId: string): Promise<WarningRecord | null> {
   try {
-    const raw = require("node:fs").readFileSync(resolveWarningRecordPath(), "utf-8");
+    const raw = await fs.readFile(resolveWarningRecordPath(accountId), "utf-8");
     return JSON.parse(raw);
   } catch {
     return null;
   }
 }
 
-async function writeWarningRecord(record: WarningRecord): Promise<void> {
-  const filePath = resolveWarningRecordPath();
+async function writeWarningRecord(accountId: string, record: WarningRecord): Promise<void> {
+  const filePath = resolveWarningRecordPath(accountId);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, JSON.stringify(record, null, 2), "utf-8");
 }
@@ -927,12 +928,9 @@ export async function checkAndWarnOpenPolicyRisk(params: {
 }): Promise<void> {
   const { cfg, accountId, log } = params;
   try {
-    const feishuCfg = (cfg as Record<string, unknown>).channels as
-      | Record<string, unknown>
-      | undefined;
-    const accountCfg = (feishuCfg?.feishu ?? feishuCfg?.[accountId]) as
-      | Record<string, unknown>
-      | undefined;
+    // Resolve the merged account config (top-level defaults + per-account overrides)
+    const account = resolveFeishuAccount({ cfg, accountId });
+    const accountCfg = account.config as unknown as Record<string, unknown>;
 
     // 1. Check if security warning is disabled
     if (accountCfg?.disableSecurityWarning === true) {
@@ -955,7 +953,7 @@ export async function checkAndWarnOpenPolicyRisk(params: {
     }
 
     // 4. Check if already warned
-    const existingRecord = readWarningRecord();
+    const existingRecord = await readWarningRecord(accountId);
     if (existingRecord) {
       log(`feishu[${accountId}]: open policy warning skipped: already warned`);
       return;
@@ -964,7 +962,6 @@ export async function checkAndWarnOpenPolicyRisk(params: {
     // 5. Resolve app owner via OAPI
     let ownerOpenId: string | undefined;
     try {
-      const account = resolveFeishuAccount({ cfg, accountId });
       if (!account.configured || !account.appId) {
         log(`feishu[${accountId}]: open policy warning skipped: account not configured`);
         return;
@@ -1020,7 +1017,7 @@ export async function checkAndWarnOpenPolicyRisk(params: {
         .format(new Date())
         .replace(" ", "T")
         .replace(/\s*GMT/, "");
-      await writeWarningRecord({
+      await writeWarningRecord(accountId, {
         userOpenId: ownerOpenId,
         warnedAt,
         dmPolicy: dmPolicy ?? "",

@@ -7,6 +7,7 @@ const createFeishuClientMock = vi.fn((account: { appId?: string } | undefined) =
 }));
 
 vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
   createFeishuClient: (account: { appId?: string } | undefined) => createFeishuClientMock(account),
 }));
 

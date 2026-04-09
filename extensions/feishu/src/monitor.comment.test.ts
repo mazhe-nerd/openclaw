@@ -28,6 +28,7 @@ const TEST_DOC_TOKEN = "doxxxxxxx";
 vi.mock("./client.js", () => ({
   createEventDispatcher: createEventDispatcherMock,
   createFeishuClient: createFeishuClientMock,
+  setFeishuUserAgentMode: vi.fn(),
 }));
 
 vi.mock("./comment-handler.js", () => ({

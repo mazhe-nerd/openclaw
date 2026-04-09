@@ -35,6 +35,7 @@ const createMonitorRuntime = () =>
   }) as never;
 
 vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
   createEventDispatcher: createEventDispatcherMock,
 }));
 

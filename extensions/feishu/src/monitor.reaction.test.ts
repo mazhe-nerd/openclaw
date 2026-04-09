@@ -23,6 +23,8 @@ let handlers: Record<string, (data: unknown) => Promise<void>> = {};
 
 vi.mock("./client.js", () => ({
   createEventDispatcher: createEventDispatcherMock,
+  createFeishuClient: vi.fn(),
+  setFeishuUserAgentMode: vi.fn(),
 }));
 
 vi.mock("./bot.js", async () => {

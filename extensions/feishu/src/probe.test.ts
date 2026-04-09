@@ -4,13 +4,14 @@ import { clearProbeCache, FEISHU_PROBE_REQUEST_TIMEOUT_MS, probeFeishu } from ".
 const createFeishuClientMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./client.js", () => ({
+  setFeishuUserAgentMode: vi.fn(),
   createFeishuClient: createFeishuClientMock,
 }));
 
 const DEFAULT_CREDS = { appId: "cli_123", appSecret: "secret" } as const; // pragma: allowlist secret
 const DEFAULT_SUCCESS_RESPONSE = {
   code: 0,
-  bot: { bot_name: "TestBot", open_id: "ou_abc123" },
+  data: { pingBotInfo: { botName: "TestBot", botID: "ou_abc123" } },
 } as const;
 const DEFAULT_SUCCESS_RESULT = {
   ok: true,
@@ -20,7 +21,7 @@ const DEFAULT_SUCCESS_RESULT = {
 } as const;
 const BOT1_RESPONSE = {
   code: 0,
-  bot: { bot_name: "Bot1", open_id: "ou_1" },
+  data: { pingBotInfo: { botName: "Bot1", botID: "ou_1" } },
 } as const;
 
 function makeRequestFn(response: Record<string, unknown>) {
@@ -135,8 +136,9 @@ describe("probeFeishu", () => {
 
     expect(requestFn).toHaveBeenCalledWith(
       expect.objectContaining({
-        method: "GET",
-        url: "/open-apis/bot/v3/info",
+        method: "POST",
+        url: "/open-apis/bot/v1/openclaw_bot/ping",
+        data: { needBotInfo: true },
         timeout: FEISHU_PROBE_REQUEST_TIMEOUT_MS,
       }),
     );
@@ -259,16 +261,15 @@ describe("probeFeishu", () => {
     });
   });
 
-  it("handles response.data.bot fallback path", async () => {
-    setupClient({
-      code: 0,
-      data: { bot: { bot_name: "DataBot", open_id: "ou_data" } },
-    });
+  it("returns empty bot info when pingBotInfo is missing", async () => {
+    setupClient({ code: 0, data: {} });
 
-    await expectDefaultSuccessResult(DEFAULT_CREDS, {
-      ...DEFAULT_SUCCESS_RESULT,
-      botName: "DataBot",
-      botOpenId: "ou_data",
+    const result = await probeFeishu(DEFAULT_CREDS);
+    expect(result).toEqual({
+      ok: true,
+      appId: "cli_123",
+      botName: undefined,
+      botOpenId: undefined,
     });
   });
 });
