@@ -1,7 +1,12 @@
 import type { Agent } from "node:https";
+import { createRequire } from "node:module";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import { resolveAmbientNodeProxyAgent } from "openclaw/plugin-sdk/extension-shared";
 import type { FeishuConfig, FeishuDomain, ResolvedFeishuAccount } from "./types.js";
+
+const require = createRequire(import.meta.url);
+const { version: pluginVersion } = require("../package.json") as { version: string };
+export const FEISHU_USER_AGENT = `openclaw-feishu-builtin/${pluginVersion}/${process.platform}`;
 
 type FeishuClientSdk = Pick<
   typeof Lark,
@@ -68,7 +73,11 @@ function createTimeoutHttpInstance(defaultTimeoutMs: number): Lark.HttpInstance 
   const base: FeishuHttpInstanceLike = feishuClientSdk.defaultHttpInstance;
 
   function injectTimeout<D>(opts?: Lark.HttpRequestOptions<D>): Lark.HttpRequestOptions<D> {
-    return { timeout: defaultTimeoutMs, ...opts } as Lark.HttpRequestOptions<D>;
+    return {
+      timeout: defaultTimeoutMs,
+      ...opts,
+      headers: { "User-Agent": FEISHU_USER_AGENT, ...opts?.headers },
+    } as Lark.HttpRequestOptions<D>;
   }
 
   return {
